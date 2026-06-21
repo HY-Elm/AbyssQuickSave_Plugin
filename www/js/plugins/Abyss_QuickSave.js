@@ -339,11 +339,13 @@
         return /<宅>/i.test($dataMap.note || '');
     };
 
-    // 是否有地图事件解释器正在“自动往下跑”的剧情演出。停在 Show Choices /
-    // 数字输入 / 物品选择处等待玩家输入的不算（此时后续命令尚未执行，存档
-    // 后读回来会重新弹出选择，安全）。其余（Wait、移动、加状态等自动推进）
-    // 都算危险：半途存档会把未跑完的事件序列化，读取时从中途继续执行，
-    // 导致重复加状态/掉血等异常。
+    /*
+    是否有地图事件解释器正在“自动往下跑”的剧情演出。停在 Show Choices /
+    数字输入 / 物品选择处等待玩家输入的不算（此时后续命令尚未执行，存档
+    后读回来会重新弹出选择，安全）。其余（Wait、移动、加状态等自动推进）
+    都算危险：半途存档会把未跑完的事件序列化，读取时从中途继续执行，
+    导致重复加状态/掉血等异常。
+    */
     AbyssQuickSave.isStoryEventAdvancing = function() {
         if (!$gameMap || !$gameMap.isEventRunning || !$gameMap.isEventRunning()) {
             return false;
@@ -550,11 +552,10 @@
             return false;
         }
 
-        // A normal event-command transfer runs common event 21, whose core
-        // player/UI initialization is ex_playerConditionCheck(). A managed
-        // load uses reserveTransfer directly, so that common event is not run.
-        // Call only the deterministic initializer here; do not run the whole
-        // transfer common event because it can spawn random map objects.
+        /*
+        正常的事件指令转移会执行公共事件 21，其中负责玩家/UI 初始化的核心是ex_playerConditionCheck()。而托管读取走的是 reserveTransfer
+        不会触发那个公共事件。这里只调用确定性的初始化函数；不能跑整个转移公共事件，可能会随机生成地图对象。
+        */
         try {
             if (window.QJ && QJ.MPMZ && QJ.MPMZ.tl &&
                 typeof QJ.MPMZ.tl.ex_playerConditionCheck === 'function') {
@@ -564,8 +565,7 @@
             console.error(PLUGIN_NAME + ': player/UI initialization failed', e);
         }
 
-        // Recreate the quest guide once more after the system group has been
-        // rebuilt. The function removes its old group before creating it.
+        // 在系统 group 重建之后，再重建一次任务指引。该函数会先移除旧的 group再创建新的。
         try {
             var actor = $gameParty && $gameParty.leader ?
                 $gameParty.leader() : null;
@@ -578,8 +578,7 @@
             console.error(PLUGIN_NAME + ': quest UI initialization failed', e2);
         }
 
-        // ex_playerConditionCheck forces this flag on. Restore the exact state
-        // captured by the quick save (old saves fall back to platform default).
+        // ex_playerConditionCheck 会强制把该标志置为开启。这里恢复快速存档时实际捕获的状态。
         this.restoreManagedVirtualButtons();
         return true;
     };
@@ -784,19 +783,20 @@
         }
     };
 
-    // 快捷读取崩溃根因：地图场景尚未建立 _spriteset 等显示对象时切换到
-    // 读取界面，会触发官方 Scene_Map.terminate 里的 this._spriteset.update()
-    // 对 undefined 调用。读取前必须确认地图场景已经完整启动且空闲。
+    /*
+    快捷读取崩溃根因：地图场景尚未建立 _spriteset 等显示对象时切换到读取界面，
+    会触发官方 Scene_Map.terminate 里的 this._spriteset.update()对 undefined 调用。
+    读取前必须确认地图场景已经完整启动且空闲。
+    */
     AbyssQuickSave.mapLoadBlockReason = function() {
         var scene = SceneManager._scene;
         if (!(scene instanceof Scene_Map)) {
             return '请在地图界面使用快捷读取。';
         }
-        // 官方/自定义 terminate 真正会解引用的只有 _spriteset.update() 与
-        // _mapNameWindow.hide()；这两者在地图加载完成后必然存在。_fadeSprite、
-        // _windowLayer 只是传给 removeChild（对 undefined 安全），不能作为
-        // “是否载入完成”的判据——从菜单返回的地图不触发淡入，_fadeSprite 永远
-        // 不会创建，旧判据会在安全地点误报“地图还在载入中”。
+        /*官方/自定义 terminate 真正会解引用的只有 _spriteset.update() 与_mapNameWindow.hide()；
+        这两者在地图加载完成后必然存在。_fadeSprite、_windowLayer 只是传给 removeChild（对 undefined 安全），
+        不能作为“是否载入完成”的判据——从菜单返回的地图不触发淡入，_fadeSprite 永远不会创建，旧判据会在安全地点误报“地图还在载入中”。
+        */
         if (!scene._spriteset || !scene._mapNameWindow) {
             return '地图还在载入中，请稍候再读取。';
         }
@@ -812,16 +812,13 @@
         if ($gamePlayer.isTransferring && $gamePlayer.isTransferring()) {
             return '地图切换中不能读取。';
         }
-        // 不再因为“有事件在跑”就拒绝读取：家园等枢纽场景往往有常驻的
-        // 并行/自动执行事件驱动交互 UI，isEventRunning() 长期为 true，会让
-        // 玩家在安全地点永远无法读取。读取本身会用存档完整重建游戏状态，
-        // 事件中途被打断不会损坏存档；真正会崩的“地图未就绪”已由上面的
-        // _spriteset / _mapNameWindow 判据兜住。真正算“剧情演出”的是对话/
-        // 消息正在显示，仅在此时才拦截。
-        // 只在“真正有对话正文在显示”时拦截。交互弹出的选项按钮在引擎里是
-        // Show Choices（$gameMessage.isChoice()），isBusy() 会把它算作忙碌，
-        // 导致玩家点开交互按钮就读不了。hasText() 仅在有对话正文时为真，正好
-        // 对应玩家说的“进入剧情演出”。
+        /*
+        不再因为“有事件在跑”就拒绝读取：家园等枢纽场景往往有常驻的/并行/自动执行事件驱动交互 UI，isEventRunning() 
+        长期为 true，会让玩家在安全地点永远无法读取。读取本身会用存档完整重建游戏状态，
+        事件中途被打断不会损坏存档；真正会崩的“地图未就绪”已由上面的_spriteset / _mapNameWindow 判据兜住。
+        只在“真正有对话正文在显示”时拦截。交互弹出的选项按钮在引擎里是Show Choices（$gameMessage.isChoice()），isBusy() 会把它算作忙碌，
+        导致玩家点开交互按钮就读不了。hasText() 仅在有对话正文时为真，正好对应玩家说的“进入剧情演出”。
+        */
         if ($gameMessage && $gameMessage.hasText && $gameMessage.hasText()) {
             return '对话或剧情演出中不能读取。';
         }
@@ -871,8 +868,10 @@
             this.toast('官方第20号槽没有存档。', '#ffb0b0');
             return false;
         }
-        // 从地图快捷键读取时执行完整的地图安全检查；从管理界面打开读取时
-        // 当前场景本就是菜单，允许直接切换到官方读取界面。
+        /* 
+         从地图快捷键读取时执行完整的地图安全检查；从管理界面打开读取时
+         当前场景本就是菜单，允许直接切换到官方读取界面。
+         */
         if (!fromManager) {
             var blockReason = this.mapLoadBlockReason();
             if (blockReason) {
